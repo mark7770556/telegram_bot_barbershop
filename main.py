@@ -32,7 +32,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from html import escape
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 bot = telebot.TeleBot(os.getenv("BOT_TOKEN"))
 
