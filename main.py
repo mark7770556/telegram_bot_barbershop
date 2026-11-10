@@ -25,7 +25,9 @@ from database import (
     update_telegram_username,
     get_pending_bookings,
     confirm_booking,
-    cleanup_old_bookings
+    cleanup_old_bookings,
+    deactivate_service,
+    deactivate_barber
 )
 
 from datetime import datetime
@@ -41,6 +43,15 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 @bot.message_handler(commands = ['start'])
 def start(m):
     update_telegram_username(m.from_user.id, m.from_user.username)
+    main_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True,one_time_keyboard=False)
+
+    main_keyboard.add(types.KeyboardButton("🏠 Главная"))
+
+    bot.send_message(
+        m.chat.id,
+        "Используйте кнопку ниже, чтобы вернуться в главное меню.",
+        reply_markup=main_keyboard
+    )
     keyboard = types.InlineKeyboardMarkup(row_width = 2)
 
     a1 = types.InlineKeyboardButton("📅 Записаться",callback_data = "a1")
@@ -65,6 +76,10 @@ def start(m):
         keyboard.add(admin_button)
 
     bot.send_message(m.chat.id,'Добро пожаловать в Barbershop!',reply_markup = keyboard)
+
+@bot.message_handler(func=lambda message: message.text == "🏠 Главная")
+def home_button(message):
+    start(message)
 
 # ==============================
 # СВЯЗЬ С АДМИНИСТРАТОРОМ
@@ -193,14 +208,42 @@ def get_phone_name(m,tg_id,rg_username,full_name,):
 
 
 # a4 Button
-@bot.callback_query_handler(func = lambda call: call.data == "a4")
+@bot.callback_query_handler(func=lambda call: call.data == "a4")
 def a4(call):
     bot.answer_callback_query(call.id)
+
+    chat_id = call.message.chat.id
     masters = our_masters()
+
     if masters is None:
-        bot.send_message(call.message.chat.id,"Не удалось загрузить список мастеров.")
+        bot.send_message(chat_id, "Не удалось загрузить список мастеров.")
         return
-    bot.send_message(call.message.chat.id,masters,parse_mode="HTML")
+
+    if not masters:
+        bot.send_message(chat_id, "💈 Пока мастеров нет.")
+        return
+
+    bot.send_message(chat_id, "💈 <b>НАШИ МАСТЕРА</b>", parse_mode="HTML")
+
+    for name, description, photo_file_id in masters:
+        caption = f"✂️ <b>{escape(name)}</b>"
+
+        if description:
+            caption += f"\n\n📝 {escape(description)}"
+
+        if photo_file_id:
+            bot.send_photo(
+                chat_id,
+                photo_file_id,
+                caption=caption,
+                parse_mode="HTML"
+            )
+        else:
+            bot.send_message(
+                chat_id,
+                caption,
+                parse_mode="HTML"
+            )
 
 
 # a2 Button
@@ -270,6 +313,14 @@ def a3(call):
 
 #a1
 booking_data = {}
+def handle_home_button(message):
+    if message.text == "🏠 Главная":
+        booking_data.pop(message.from_user.id, None)
+        start(message)
+        return True
+
+    return False
+
 @bot.callback_query_handler(func=lambda call: call.data == "a1")
 def booking_start(call):
     bot.answer_callback_query(call.id)
@@ -477,7 +528,9 @@ def admin_panel(call):
         types.InlineKeyboardButton("📋 Все активные записи", callback_data="admin_bookings"),
         types.InlineKeyboardButton("✅ Подтвердить запись", callback_data="admin_confirm_bookings"),
         types.InlineKeyboardButton("❌ Отменить запись", callback_data="admin_cancel_booking"),
-        types.InlineKeyboardButton("✉️ Написать клиенту", callback_data="admin_message")
+        types.InlineKeyboardButton("✉️ Написать клиенту", callback_data="admin_message"),
+        types.InlineKeyboardButton("🗑️ Удалить услугу",callback_data="admin_delete_service"),
+        types.InlineKeyboardButton("🗑️ Удалить барбера",callback_data="admin_delete_barber"),
     )
 
     bot.send_message(
@@ -659,18 +712,228 @@ def admin_barber_description(message, name):
 
     description = message.text.strip()
 
-    result = add_barber(name, description)
+    if not description:
+        msg = bot.send_message(
+            message.chat.id,
+            "Описание не может быть пустым. Введите описание:"
+        )
+        bot.register_next_step_handler(
+            msg, admin_barber_description, name
+        )
+        return
+
+    msg = bot.send_message(
+        message.chat.id,
+        "📸 Теперь отправьте фотографию барбера:"
+    )
+
+    bot.register_next_step_handler(
+        msg, admin_barber_photo, name, description
+    )
+
+
+def admin_barber_photo(message, name, description):
+    if not is_admin(message.from_user.id):
+        return
+
+    if message.content_type != "photo":
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ Нужно отправить именно фотографию. Попробуйте ещё раз:"
+        )
+        bot.register_next_step_handler(
+            msg, admin_barber_photo, name, description
+        )
+        return
+
+    photo_file_id = message.photo[-1].file_id
+
+    result = add_barber(name, description, photo_file_id)
 
     if result:
         bot.send_message(
             message.chat.id,
-            "✅ Барбер успешно добавлен!"
+            "✅ Барбер успешно добавлен вместе с фотографией!"
         )
     else:
         bot.send_message(
             message.chat.id,
             "❌ Не удалось добавить барбера."
         )
+
+
+# ==========================================
+# УДАЛЕНИЕ УСЛУГ И БАРБЕРОВ — ТОЛЬКО АДМИН
+# ==========================================
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_delete_service")
+def admin_delete_service_start(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа!")
+        return
+
+    bot.answer_callback_query(call.id)
+    services = get_services()
+
+    if services is None:
+        bot.send_message(call.message.chat.id, "Ошибка загрузки услуг.")
+        return
+
+    if not services:
+        bot.send_message(call.message.chat.id, "Активных услуг нет.")
+        return
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+    for service_id, name, price, duration in services:
+        keyboard.add(types.InlineKeyboardButton(
+            f"{name} — {price} ₸",
+            callback_data=f"delete_service_{service_id}"
+        ))
+
+    bot.send_message(
+        call.message.chat.id,
+        "Выберите услугу для удаления:",
+        reply_markup=keyboard
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("delete_service_"))
+def delete_service_choose(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа!")
+        return
+
+    service_id = int(call.data.rsplit("_", 1)[1])
+
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(
+        types.InlineKeyboardButton(
+            "✅ Подтвердить",
+            callback_data=f"confirm_delete_service_{service_id}"
+        ),
+        types.InlineKeyboardButton(
+            "❌ Отмена",
+            callback_data="cancel_delete_item"
+        )
+    )
+
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
+        "Вы действительно хотите удалить эту услугу?",
+        reply_markup=keyboard
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_delete_service_"))
+def delete_service_confirm(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа!")
+        return
+
+    service_id = int(call.data.rsplit("_", 1)[1])
+    result = deactivate_service(service_id)
+
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
+        "✅ Услуга удалена из списка."
+        if result else "❌ Не удалось удалить услугу."
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_delete_barber")
+def admin_delete_barber_start(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа!")
+        return
+
+    bot.answer_callback_query(call.id)
+    barbers = get_barbers()
+
+    if barbers is None:
+        bot.send_message(call.message.chat.id, "Ошибка загрузки барберов.")
+        return
+
+    if not barbers:
+        bot.send_message(call.message.chat.id, "Активных барберов нет.")
+        return
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+    for barber_id, name in barbers:
+        keyboard.add(types.InlineKeyboardButton(
+            name,
+            callback_data=f"delete_barber_{barber_id}"
+        ))
+
+    bot.send_message(
+        call.message.chat.id,
+        "Выберите барбера для удаления:",
+        reply_markup=keyboard
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("delete_barber_"))
+def delete_barber_choose(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа!")
+        return
+
+    barber_id = int(call.data.rsplit("_", 1)[1])
+
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(
+        types.InlineKeyboardButton(
+            "✅ Подтвердить",
+            callback_data=f"confirm_delete_barber_{barber_id}"
+        ),
+        types.InlineKeyboardButton(
+            "❌ Отмена",
+            callback_data="cancel_delete_item"
+        )
+    )
+
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
+        "Вы действительно хотите удалить этого барбера?",
+        reply_markup=keyboard
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_delete_barber_"))
+def delete_barber_confirm(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа!")
+        return
+
+    barber_id = int(call.data.rsplit("_", 1)[1])
+    result = deactivate_barber(barber_id)
+
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
+        "✅ Барбер удалён из списка."
+        if result else "❌ Не удалось удалить барбера."
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "cancel_delete_item")
+def cancel_delete_item(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа!")
+        return
+
+    bot.answer_callback_query(call.id, "Отменено.")
+    bot.edit_message_reply_markup(
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=None
+    )
+
+
 
 
 # ==============================

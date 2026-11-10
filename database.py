@@ -43,25 +43,25 @@ def register_db(tg_id,rg_username,full_name,phone):
 
 
 def our_masters():
-    conn , cursor = connect_whis_bd()
+    conn, cursor = connect_whis_bd()
+
     if conn is None or cursor is None:
         return None
+
     try:
-        sql = "select name, description from barbers WHERE is_active = TRUE ORDER BY name"
-        cursor.execute(sql)
-        masters = cursor.fetchall()
-        if not masters:
-            return "💈 Пока мастеров нет"
-        result = ["💈 <b>НАШИ МАСТЕРА</b>\n"]
-        for name, description in masters:
-            result.append(f"✂️ <b>{html.escape(name)}</b>")
-            if description:
-                result.append(f"📝 {html.escape(description)}")
-            result.append("━━━━━━━━━━━━━━")
-        return "\n".join(result)
-    except psycopg2.Error as e :
-        print("ошибка с бд: ",e)
+        cursor.execute("""
+            SELECT name, description, photo_file_id
+            FROM barbers
+            WHERE is_active = TRUE
+            ORDER BY name
+        """)
+
+        return cursor.fetchall()
+
+    except psycopg2.Error as e:
+        print("Ошибка получения мастеров:", e)
         return None
+
     finally:
         cursor.close()
         conn.close()
@@ -355,17 +355,18 @@ def add_service(name, description, price, duration):
     finally:
         cursor.close()
         conn.close()
-def add_barber(name, description):
-    conn, cursor = connect_whis_bd()
 
+
+def add_barber(name, description, photo_file_id):
+    conn, cursor = connect_whis_bd()
     if conn is None or cursor is None:
         return False
 
     try:
         cursor.execute("""
-            INSERT INTO barbers (name, description)
-            VALUES (%s, %s)
-        """, (name, description))
+            INSERT INTO barbers (name, description, photo_file_id)
+            VALUES (%s, %s, %s)
+        """, (name, description, photo_file_id))
 
         conn.commit()
         return True
@@ -378,6 +379,8 @@ def add_barber(name, description):
     finally:
         cursor.close()
         conn.close()
+
+
 def get_all_bookings():
     conn, cursor = connect_whis_bd()
     if conn is None or cursor is None:
@@ -690,3 +693,56 @@ def confirm_booking(booking_id):
         cursor.close()
         conn.close()
 
+
+def deactivate_service(service_id):
+    conn, cursor = connect_whis_bd()
+    if conn is None or cursor is None:
+        return False
+
+    try:
+        cursor.execute("""
+            UPDATE services
+            SET is_active = FALSE
+            WHERE id = %s AND is_active = TRUE
+            RETURNING id
+        """, (service_id,))
+
+        result = cursor.fetchone()
+        conn.commit()
+        return result is not None
+
+    except psycopg2.Error as e:
+        conn.rollback()
+        print("Ошибка удаления услуги:", e)
+        return False
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def deactivate_barber(barber_id):
+    conn, cursor = connect_whis_bd()
+    if conn is None or cursor is None:
+        return False
+
+    try:
+        cursor.execute("""
+            UPDATE barbers
+            SET is_active = FALSE
+            WHERE id = %s AND is_active = TRUE
+            RETURNING id
+        """, (barber_id,))
+
+        result = cursor.fetchone()
+        conn.commit()
+        return result is not None
+
+    except psycopg2.Error as e:
+        conn.rollback()
+        print("Ошибка удаления барбера:", e)
+        return False
+
+    finally:
+        cursor.close()
+        conn.close()
