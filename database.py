@@ -85,6 +85,7 @@ def check_id(tg_id):
         cursor.close()
         conn.close()
 
+
 def my_booking(tg_id):
     conn, cursor = connect_whis_bd()
 
@@ -114,14 +115,31 @@ def my_booking(tg_id):
         result = ["📋 <b>ВАШИ ЗАПИСИ</b>\n"]
 
         for booking_id, barber, service, start_at, status in bookings:
+
+            status_text = str(status).lower()
+
+            if status_text in ("confirmed", "подтверждена", "подтверждено"):
+                status_display = "✅ Подтверждена"
+            elif status_text in ("pending", "ожидает подтверждения"):
+                status_display = "🕒 Ожидает подтверждения"
+            elif status_text in ("cancelled", "canceled", "отменена"):
+                status_display = "❌ Отменена"
+            elif status_text in ("completed", "завершена"):
+                status_display = "🏁 Завершена"
+            else:
+                status_display = f"📌 {html.escape(str(status))}"
+
             result.append(
-                f"🔹 Запись №{booking_id}\n"
-                f"💈 Мастер: {html.escape(str(barber))}\n"
-                f"✂️ Услуга: {html.escape(str(service))}\n"
-                f"📅 Дата: {start_at.strftime('%d.%m.%Y %H:%M')}\n"
-                f"📌 Статус: {html.escape(str(status))}\n"
-                f"━━━━━━━━━━━━━━"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💈 <b>ЗАПИСЬ №{booking_id}</b>\n\n"
+                f"👤 <b>Мастер:</b> {html.escape(str(barber))}\n"
+                f"✂️ <b>Услуга:</b> {html.escape(str(service))}\n"
+                f"📅 <b>Дата:</b> {start_at.strftime('%d.%m.%Y')}\n"
+                f"🕒 <b>Время:</b> {start_at.strftime('%H:%M')}\n"
+                f"📌 <b>Статус:</b> {status_display}\n"
             )
+
+        result.append("━━━━━━━━━━━━━━━━━━")
 
         return "\n".join(result)
 
@@ -133,6 +151,7 @@ def my_booking(tg_id):
     finally:
         cursor.close()
         conn.close()
+
 
 def comments_author():
     conn, cursor = connect_whis_bd()

@@ -257,7 +257,7 @@ def a2(call):
         bot.send_message(call.message.chat.id, "📋 У вас пока нет записей.")
         return
 
-    bot.send_message(call.message.chat.id, result)
+    bot.send_message(call.message.chat.id, result,parse_mode="HTML")
 
         
 #a5
