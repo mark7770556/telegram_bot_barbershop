@@ -2,10 +2,20 @@ import psycopg2
 import os
 from dotenv import load_dotenv
 import html
+from zoneinfo import ZoneInfo
+
 
 from datetime import timedelta
 
 load_dotenv()
+
+ASTANA_TZ = ZoneInfo("Asia/Almaty")
+
+def format_time(dt, fmt="%d.%m.%Y %H:%M"):
+    if dt is None:
+        return ""
+
+    return dt.astimezone(ASTANA_TZ).strftime(fmt)
 
 def connect_whis_bd():
     try:

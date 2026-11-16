@@ -30,6 +30,7 @@ from database import (
     deactivate_service,
     deactivate_barber,
     get_bookings_for_review,
+    format_time,
     mark_review_requested
 )
 
@@ -480,7 +481,7 @@ def finish_booking(message):
         f"💈 Мастер: {escape(str(barber_name))}\n"
         f"✂️ Услуга: {escape(str(service_name))}\n"
         f"💰 Цена: {price} ₸\n"
-        f"📅 Дата: {start_at.strftime('%d.%m.%Y %H:%M')}\n"
+        f"📅 Дата: {format_time(start_at)}\n"
         f"⏱ Длительность: {duration} минут\n"
         f"📌 Ожидайте подтверждения.",
         parse_mode="HTML"
@@ -489,14 +490,14 @@ def finish_booking(message):
     try:
         bot.send_message(
             ADMIN_ID,
-            f"🔔 <b>НОВАЯ ЗАПИСЬ №{booking_id}</b>\n\n"
+            f"🔔 <b>НОВАЯ ЗАПИСЬ №{booking_id}</b>\n\n" 
             f"👤 Клиент: {escape(full_name)}\n"
             f"🆔 Telegram ID: {user_id}\n"
             f"💈 Мастер: {escape(str(barber_name))}\n"
             f"✂️ Услуга: {escape(str(service_name))}\n"
             f"💰 Цена: {price} ₸\n"
-            f"📅 Начало: {start_at.strftime('%d.%m.%Y %H:%M')}\n"
-            f"⏱ Конец: {end_at.strftime('%H:%M')}\n"
+            f"📅 Начало: {format_time(start_at)}\n"
+            f"⏱ Конец: {format_time(end_at, '%H:%M')}\n"
             f"📌 Статус: Ожидает подтверждения",
             parse_mode="HTML"
         )
@@ -1149,7 +1150,7 @@ def admin_show_bookings(call):
             f"🆔 Telegram ID: <code>{telegram_id}</code>\n"
             f"💈 Мастер: {escape(str(barber))}\n"
             f"✂️ Услуга: {escape(str(service))}\n"
-            f"📅 Дата: {start_at.strftime('%d.%m.%Y %H:%M')}\n"
+            f"📅 Дата: {format_time(start_at)}\n"
             f"📌 Статус: {escape(str(status))}\n"
             f"━━━━━━━━━━━━━━\n"
         )
@@ -1204,7 +1205,7 @@ def admin_confirm_bookings_list(call):
             f"🆔 Telegram ID: <code>{telegram_id}</code>\n"
             f"💈 Мастер: {escape(str(barber))}\n"
             f"✂️ Услуга: {escape(str(service))}\n"
-            f"📅 Дата: {start_at.strftime('%d.%m.%Y %H:%M')}\n"
+            f"📅 Дата: {format_time(start_at)}\n"
             f"📌 Статус: ожидает подтверждения"
         )
         keyboard = types.InlineKeyboardMarkup()
@@ -1238,7 +1239,7 @@ def admin_confirm_one(call):
             telegram_id,
             "✅ <b>Ваша запись подтверждена!</b>\n\n"
             f"✂️ Услуга: {escape(str(service_name))}\n"
-            f"📅 Дата: {start_at.strftime('%d.%m.%Y %H:%M')}\n"
+            f"📅 Дата: {format_time(start_at)}\n"
             "Ждём вас!",
             parse_mode="HTML"
         )
@@ -1279,7 +1280,7 @@ def admin_cancel_start(call):
             f"👤 Клиент: {escape(str(full_name))}\n"
             f"💈 Мастер: {escape(str(barber))}\n"
             f"✂️ Услуга: {escape(str(service))}\n"
-            f"📅 Дата: {start_at.strftime('%d.%m.%Y %H:%M')}\n"
+            f"📅 Дата: {format_time(start_at)}\n"
             f"━━━━━━━━━━━━━━\n"
         )
 
@@ -1366,7 +1367,7 @@ def admin_cancel_confirm(call):
             telegram_id,
             f"❌ Ваша запись отменена администратором.\n\n"
             f"✂️ Услуга: {escape(str(service_name))}\n"
-            f"📅 Дата: {start_at.strftime('%d.%m.%Y %H:%M')}"
+            f"📅 Дата: {format_time(start_at)}"
         )
     except Exception as e:
         print("Не удалось уведомить клиента:", e)
@@ -1485,8 +1486,8 @@ def admin_client_select(call):
             f"🔹 <b>Запись №{booking_id}</b>\n"
             f"✂️ Услуга: {escape(str(service))}\n"
             f"💈 Мастер: {escape(str(barber))}\n"
-            f"📅 Начало: {start_at.strftime('%d.%m.%Y %H:%M')}\n"
-            f"⏱ Окончание: {end_at.strftime('%d.%m.%Y %H:%M')}\n"
+            f"📅 Начало: {format_time(start_at)}\n"
+            f"⏱ Окончание: {format_time(end_at)}\n"
             f"📌 Статус: {escape(str(status))}\n"
             f"━━━━━━━━━━━━━━\n"
         )
