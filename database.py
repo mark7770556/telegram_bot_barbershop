@@ -844,3 +844,37 @@ def get_booking_for_review(booking_id, telegram_id):
     finally:
         cursor.close()
         conn.close()
+
+def get_client_bookings(telegram_id):
+    conn, cursor = connect_whis_bd()
+
+    if conn is None or cursor is None:
+        return None
+
+    try:
+        cursor.execute("""
+            SELECT
+                u.full_name,
+                u.telegram_username,
+                bk.id,
+                bk.service_name_snapshot,
+                b.name,
+                bk.start_at,
+                bk.end_at,
+                bk.status
+            FROM users u
+            JOIN bookings bk ON bk.user_id = u.id
+            JOIN barbers b ON b.id = bk.barber_id
+            WHERE u.telegram_id = %s
+            ORDER BY bk.start_at DESC
+        """, (telegram_id,))
+
+        return cursor.fetchall()
+
+    except psycopg2.Error as e:
+        print("Ошибка получения записей клиента:", e)
+        return None
+
+    finally:
+        cursor.close()
+        conn.close()
