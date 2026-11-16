@@ -152,27 +152,30 @@ def my_booking(tg_id):
         cursor.close()
         conn.close()
 
-
 def comments_author():
     conn, cursor = connect_whis_bd()
+
     if conn is None or cursor is None:
-        return None
+        return []
 
     try:
         cursor.execute("""
-            SELECT b.name, r.comment
+            SELECT
+                b.name,
+                r.rating,
+                r.comment
             FROM reviews r
             JOIN barbers b ON r.barber_id = b.id
             WHERE r.comment IS NOT NULL
               AND r.comment <> ''
             ORDER BY r.created_at DESC
         """)
+
         return cursor.fetchall()
 
     except psycopg2.Error as e:
-        conn.rollback()
         print("Ошибка получения отзывов:", e)
-        return None
+        return []
 
     finally:
         cursor.close()
@@ -493,7 +496,8 @@ def get_client(telegram_id):
         conn.close()
 
 
-def add_review(telegram_id, barber_id, rating, comment):
+
+def add_review(telegram_id, barber_id, rating, comment, booking_id):
     conn, cursor = connect_whis_bd()
 
     if conn is None or cursor is None:
@@ -501,9 +505,15 @@ def add_review(telegram_id, barber_id, rating, comment):
 
     try:
         cursor.execute("""
-            INSERT INTO reviews (telegram_id, barber_id, rating, comment)
-            VALUES (%s, %s, %s, %s)
-        """, (telegram_id, barber_id, rating, comment))
+            INSERT INTO reviews (
+                telegram_id,
+                barber_id,
+                rating,
+                comment,
+                booking_id
+            )
+            VALUES (%s, %s, %s, %s, %s)
+        """, (telegram_id, barber_id, rating, comment, booking_id))
 
         conn.commit()
         return True
@@ -554,36 +564,35 @@ def get_clients_with_bookings(limit=10, offset=0):
         conn.close()
 
         
-def get_client_bookings(telegram_id):
+def get_bookings_for_review():
     conn, cursor = connect_whis_bd()
 
     if conn is None or cursor is None:
-        return None
+        return []
 
     try:
         cursor.execute("""
             SELECT
-                u.full_name,
-                u.telegram_username,
                 bk.id,
-                bk.service_name_snapshot,
-                b.name,
-                bk.start_at,
-                bk.end_at,
-                bk.status
-            FROM users u
-            JOIN bookings bk ON bk.user_id = u.id
-            JOIN barbers b ON b.id = bk.barber_id
-            WHERE u.telegram_id = %s
-            ORDER BY bk.start_at DESC
-        """, (telegram_id,))
+                u.telegram_id,
+                bk.barber_id
+            FROM bookings bk
+            JOIN users u ON u.id = bk.user_id
+            WHERE bk.status = 'подтверждено'
+              AND bk.end_at <= NOW() - INTERVAL '1 hour'
+              AND bk.review_requested_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM reviews r
+                  WHERE r.booking_id = bk.id
+              )
+        """)
 
         return cursor.fetchall()
 
     except psycopg2.Error as e:
-        conn.rollback()
-        print("Ошибка получения истории клиента:", e)
-        return None
+        print("Ошибка поиска записей для отзывов:", e)
+        return []
 
     finally:
         cursor.close()
@@ -600,6 +609,11 @@ def cleanup_old_bookings():
         cursor.execute("""
             DELETE FROM bookings
             WHERE end_at <= NOW() - INTERVAL '7 days'
+            AND NOT EXISTS (
+            SELECT 1
+            FROM reviews r
+            WHERE r.booking_id = bookings.id
+            )
         """)
 
         deleted_count = cursor.rowcount
@@ -761,6 +775,71 @@ def deactivate_barber(barber_id):
         conn.rollback()
         print("Ошибка удаления барбера:", e)
         return False
+
+    finally:
+        cursor.close()
+        conn.close()
+        
+
+
+
+
+
+def mark_review_requested(booking_id):
+    conn, cursor = connect_whis_bd()
+
+    if conn is None or cursor is None:
+        return False
+
+    try:
+        cursor.execute("""
+            UPDATE bookings
+            SET review_requested_at = NOW()
+            WHERE id = %s
+              AND review_requested_at IS NULL
+        """, (booking_id,))
+
+        conn.commit()
+        return cursor.rowcount > 0
+
+    except psycopg2.Error as e:
+        conn.rollback()
+        print("Ошибка отметки приглашения на отзыв:", e)
+        return False
+
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_booking_for_review(booking_id, telegram_id):
+    conn, cursor = connect_whis_bd()
+
+    if conn is None or cursor is None:
+        return None
+
+    try:
+        cursor.execute("""
+            SELECT
+                bk.id,
+                bk.barber_id
+            FROM bookings bk
+            JOIN users u ON u.id = bk.user_id
+            WHERE bk.id = %s
+              AND u.telegram_id = %s
+              AND bk.status = 'confirmed'
+              AND bk.end_at <= NOW() - INTERVAL '1 hour'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM reviews r
+                  WHERE r.booking_id = bk.id
+              )
+        """, (booking_id, telegram_id))
+
+        return cursor.fetchone()
+
+    except psycopg2.Error as e:
+        print("Ошибка проверки записи для отзыва:", e)
+        return None
 
     finally:
         cursor.close()

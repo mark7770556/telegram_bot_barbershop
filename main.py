@@ -1,4 +1,5 @@
 import telebot 
+import re   
 from telebot import types
 import os
 import time
@@ -27,7 +28,9 @@ from database import (
     confirm_booking,
     cleanup_old_bookings,
     deactivate_service,
-    deactivate_barber
+    deactivate_barber,
+    get_bookings_for_review,
+    mark_review_requested
 )
 
 from datetime import datetime
@@ -275,11 +278,11 @@ def a6(call):
     text = "⭐ <b>ОТЗЫВЫ НАШИХ КЛИЕНТОВ</b>\n"
     text += "━━━━━━━━━━━━━━━━━━\n\n"
 
-    for master, comment in a:
+    for master, rating, comment in a:
         text += (
-            f"💈 <b>Мастер: {master}</b>\n"
-            f"💬 {comment}\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
+        f"💈 <b>{escape(str(master))}</b>\n"
+        f"{'⭐' * int(rating)}\n"
+        f"{escape(str(comment))}\n\n"
         )
 
     bot.send_message(
@@ -499,6 +502,184 @@ def finish_booking(message):
         )
     except Exception as e:
         print("Ошибка отправки админу:", e)
+
+@bot.callback_query_handler(
+    func=lambda call: re.fullmatch(r"review_\d+", call.data or "") is not None
+)
+def start_review(call):
+    telegram_id = call.from_user.id
+    booking_id = int(call.data.split("_")[1])
+
+    booking = get_booking_for_review(booking_id, telegram_id)
+
+    if booking is None:
+        bot.answer_callback_query(
+            call.id,
+            "Эта запись недоступна для отзыва.",
+            show_alert=True
+        )
+        return
+
+    _, barber_id = booking
+
+    review_sessions[telegram_id] = {
+        "booking_id": booking_id,
+        "barber_id": barber_id
+    }
+
+    markup = types.InlineKeyboardMarkup(row_width=5)
+
+    buttons = [
+        types.InlineKeyboardButton(
+            f"{rating} ⭐",
+            callback_data=f"review_rating_{booking_id}_{rating}"
+        )
+        for rating in range(1, 6)
+    ]
+
+    markup.add(*buttons)
+
+    bot.answer_callback_query(call.id)
+
+    bot.send_message(
+        telegram_id,
+        "Оцените качество обслуживания от 1 до 5 звёзд:",
+        reply_markup=markup
+    )
+@bot.callback_query_handler(
+    func=lambda call: re.fullmatch(
+        r"review_rating_\d+_[1-5]",
+        call.data or ""
+    ) is not None
+)
+def select_review_rating(call):
+    telegram_id = call.from_user.id
+
+    _, _, booking_id, rating = call.data.split("_")
+
+    booking_id = int(booking_id)
+    rating = int(rating)
+
+    session = review_sessions.get(telegram_id)
+
+    if session is None or session["booking_id"] != booking_id:
+        bot.answer_callback_query(
+            call.id,
+            "Сессия отзыва не найдена. Нажмите кнопку из приглашения ещё раз.",
+            show_alert=True
+        )
+        return
+
+    booking = get_booking_for_review(booking_id, telegram_id)
+
+    if booking is None:
+        review_sessions.pop(telegram_id, None)
+
+        bot.answer_callback_query(
+            call.id,
+            "Запись больше недоступна для отзыва.",
+            show_alert=True
+        )
+        return
+
+    session["rating"] = rating
+
+    bot.answer_callback_query(call.id)
+
+    msg = bot.send_message(
+        telegram_id,
+        f"Вы поставили {rating} из 5 ⭐\n\n"
+        "Теперь напишите свой отзыв о посещении.\n"
+        "Для отмены отправьте /cancel"
+    )
+
+    bot.register_next_step_handler(
+        msg,
+        process_review_comment,
+        booking_id,
+        session["barber_id"],
+        rating
+    )
+
+def process_review_comment(message, booking_id, barber_id, rating):
+    telegram_id = message.from_user.id
+
+    if message.text == "/cancel":
+        review_sessions.pop(telegram_id, None)
+
+        bot.send_message(
+            telegram_id,
+            "Оставление отзыва отменено."
+        )
+        return
+
+    if not message.text or not message.text.strip():
+        msg = bot.send_message(
+            telegram_id,
+            "Пожалуйста, отправьте текстовый комментарий."
+        )
+
+        bot.register_next_step_handler(
+            msg,
+            process_review_comment,
+            booking_id,
+            barber_id,
+            rating
+        )
+        return
+
+    comment = message.text.strip()
+
+    if len(comment) > 1000:
+        msg = bot.send_message(
+            telegram_id,
+            "Отзыв слишком длинный. Максимум 1000 символов. Попробуйте ещё раз."
+        )
+
+        bot.register_next_step_handler(
+            msg,
+            process_review_comment,
+            booking_id,
+            barber_id,
+            rating
+        )
+        return
+
+    # Повторно проверяем запись непосредственно перед сохранением
+    booking = get_booking_for_review(booking_id, telegram_id)
+
+    if booking is None:
+        review_sessions.pop(telegram_id, None)
+
+        bot.send_message(
+            telegram_id,
+            "Не удалось сохранить отзыв: запись недоступна или отзыв уже оставлен."
+        )
+        return
+
+    success = add_review(
+        telegram_id,
+        barber_id,
+        rating,
+        comment,
+        booking_id
+    )
+
+    review_sessions.pop(telegram_id, None)
+
+    if success:
+        bot.send_message(
+            telegram_id,
+            "Спасибо за ваш отзыв! ❤️\n\n"
+            f"Ваша оценка: {'⭐' * rating}\n"
+            "Отзыв успешно сохранён."
+        )
+    else:
+        bot.send_message(
+            telegram_id,
+            "Не удалось сохранить отзыв. Попробуйте немного позже."
+        )
+
     
 
 
@@ -1359,6 +1540,40 @@ def admin_client_select(call):
 # ==============================
 # АВТОМАТИЧЕСКАЯ ОЧИСТКА ЗАПИСЕЙ
 # ==============================
+def review_worker():
+    while True:
+        try:
+            bookings = get_bookings_for_review()
+
+            for booking in bookings:
+                booking_id, telegram_id, barber_id = booking
+
+                markup = types.InlineKeyboardMarkup()
+                button = types.InlineKeyboardButton(
+                    "⭐ Оставить отзыв",
+                    callback_data=f"review_{booking_id}"
+                )
+                markup.add(button)
+
+                try:
+                    bot.send_message(
+                        telegram_id,
+                        "Спасибо, что посетили нашу барбершоп! "
+                        "Будем рады вашему отзыву.",
+                        reply_markup=markup
+                    )
+
+                    mark_review_requested(booking_id)
+
+                    print(f"Приглашение на отзыв отправлено: запись {booking_id}")
+
+                except Exception as e:
+                    print(f"Ошибка отправки приглашения {booking_id}: {e}")
+
+        except Exception as e:
+            print("Ошибка фоновой проверки отзывов:", e)
+
+        time.sleep(60)
 
 def cleanup_worker():
     while True:
@@ -1375,11 +1590,13 @@ def cleanup_worker():
 # ==============================
 
 if __name__ == "__main__":
-    # Один раз запускаем очистку при старте, затем повторяем каждый час.
     cleanup_old_bookings()
 
     cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True)
     cleanup_thread.start()
+
+    review_thread = threading.Thread(target=review_worker, daemon=True)
+    review_thread.start()
 
     bot.infinity_polling()
 
