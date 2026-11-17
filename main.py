@@ -30,6 +30,8 @@ from database import (
     deactivate_service,
     deactivate_barber,
     get_bookings_for_review,
+    get_booking_for_review,
+    get_barber_reviews,
     format_time,
     mark_review_requested
 )
@@ -270,27 +272,87 @@ def a5(call):
     bot.send_message(call.message.chat.id,'тел: <a href="https://wa.me/77777777777">+7 777 777 77 77</a>\nweb: <a href="https://google.com">Google</a>',parse_mode = "HTML")
 
 #a6
+#a6
 @bot.callback_query_handler(func = lambda call : call.data == "a6")
 def a6(call):
-    a = comments_author()
-    if not a:
-        bot.send_message(call.message.chat.id, "💬 Пока отзывов нет.")
-        return
-    text = "⭐ <b>ОТЗЫВЫ НАШИХ КЛИЕНТОВ</b>\n"
-    text += "━━━━━━━━━━━━━━━━━━\n\n"
+    bot.answer_callback_query(call.id)
 
-    for master, rating, comment in a:
-        text += (
-        f"💈 <b>{escape(str(master))}</b>\n"
-        f"{'⭐' * int(rating)}\n"
-        f"{escape(str(comment))}\n\n"
+    barbers = get_barbers()
+
+    if not barbers:
+        bot.send_message(call.message.chat.id, "💬 Пока мастеров нет.")
+        return
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+    for barber_id, name in barbers:
+        keyboard.add(
+            types.InlineKeyboardButton(
+                f"💈 {name}",
+                callback_data=f"reviews_barber_{barber_id}"
+            )
         )
 
     bot.send_message(
         call.message.chat.id,
-        text,
+        "⭐ <b>Выберите мастера, чтобы посмотреть отзывы:</b>",
+        reply_markup=keyboard,
         parse_mode="HTML"
     )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("reviews_barber_"))
+def show_barber_reviews(call):
+    bot.answer_callback_query(call.id)
+
+    barber_id = int(call.data.rsplit("_", 1)[1])
+    barbers = dict(get_barbers() or [])
+    barber_name = barbers.get(barber_id)
+
+    if barber_name is None:
+        bot.send_message(call.message.chat.id, "Мастер больше недоступен.")
+        return
+
+    data = get_barber_reviews(barber_id)
+
+    if data is None:
+        bot.send_message(call.message.chat.id, "❌ Не удалось загрузить отзывы.")
+        return
+
+    avg_rating, total, reviews = data
+
+    if not total:
+        bot.send_message(
+            call.message.chat.id,
+            f"💈 <b>{escape(str(barber_name))}</b>\n\nПока отзывов нет.",
+            parse_mode="HTML"
+        )
+        return
+
+    header = (
+        f"💈 <b>{escape(str(barber_name))}</b>\n"
+        f"⭐ Средняя оценка: <b>{avg_rating}</b> (отзывов: {total})\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+    )
+
+    chunks = []
+    current = header
+
+    for rating, comment in reviews:
+        block = (
+            f"{'⭐' * int(rating)}\n"
+            f"{escape(str(comment))}\n\n"
+        )
+        if len(current) + len(block) > 3500:
+            chunks.append(current)
+            current = ""
+        current += block
+
+    if current:
+        chunks.append(current)
+
+    for chunk in chunks:
+        bot.send_message(call.message.chat.id, chunk, parse_mode="HTML")
 
 # a3
 @bot.callback_query_handler(func = lambda call : call.data == "a3")
@@ -317,6 +379,7 @@ def a3(call):
 
 #a1
 booking_data = {}
+review_sessions = {}
 def handle_home_button(message):
     if message.text == "🏠 Главная":
         booking_data.pop(message.from_user.id, None)
@@ -605,7 +668,7 @@ def select_review_rating(call):
 def process_review_comment(message, booking_id, barber_id, rating):
     telegram_id = message.from_user.id
 
-    if message.text == "/cancel":
+    if message.text and (message.text.startswith("/") or message.text == "🏠 Главная"):
         review_sessions.pop(telegram_id, None)
 
         bot.send_message(
@@ -1564,12 +1627,13 @@ def review_worker():
                         reply_markup=markup
                     )
 
-                    mark_review_requested(booking_id)
-
                     print(f"Приглашение на отзыв отправлено: запись {booking_id}")
 
                 except Exception as e:
                     print(f"Ошибка отправки приглашения {booking_id}: {e}")
+
+                finally:
+                    mark_review_requested(booking_id)
 
         except Exception as e:
             print("Ошибка фоновой проверки отзывов:", e)

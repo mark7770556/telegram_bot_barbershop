@@ -588,7 +588,7 @@ def get_bookings_for_review():
                 bk.barber_id
             FROM bookings bk
             JOIN users u ON u.id = bk.user_id
-            WHERE bk.status = 'подтверждено'
+            WHERE bk.status = 'confirmed'
               AND bk.end_at <= NOW() - INTERVAL '1 hour'
               AND bk.review_requested_at IS NULL
               AND NOT EXISTS (
@@ -883,6 +883,40 @@ def get_client_bookings(telegram_id):
 
     except psycopg2.Error as e:
         print("Ошибка получения записей клиента:", e)
+        return None
+
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_barber_reviews(barber_id, limit=30):
+    conn, cursor = connect_whis_bd()
+
+    if conn is None or cursor is None:
+        return None
+
+    try:
+        cursor.execute("""
+            SELECT ROUND(AVG(rating), 1), COUNT(*)
+            FROM reviews
+            WHERE barber_id = %s
+        """, (barber_id,))
+        avg_rating, total = cursor.fetchone()
+
+        cursor.execute("""
+            SELECT rating, comment
+            FROM reviews
+            WHERE barber_id = %s
+              AND comment IS NOT NULL
+              AND comment <> ''
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (barber_id, limit))
+
+        return avg_rating, total, cursor.fetchall()
+
+    except psycopg2.Error as e:
+        print("Ошибка получения отзывов барбера:", e)
         return None
 
     finally:
